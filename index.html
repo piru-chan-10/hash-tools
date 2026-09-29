@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SHA-256 Hasher — SecureHash256</title>
+    <meta name="description" content="A blazing-fast, browser-native SHA-256 hash generator built from scratch in vanilla JavaScript." />
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- Animated background -->
+<div class="bg-canvas" aria-hidden="true">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+</div>
+
+<div class="wrapper">
+
+    <!-- Header -->
+    <header>
+        <div class="header-badge">
+            <span class="dot"></span>
+            SHA-256 · FIPS 180-4
+        </div>
+        <h1>SecureHash 256</h1>
+        <p class="subtitle">
+            A pure-JavaScript SHA-256 implementation built from scratch.
+            Type anything below and get a cryptographic hash instantly.
+        </p>
+    </header>
+
+    <!-- Main Card -->
+    <div class="card">
+
+        <!-- Input -->
+        <p class="section-label">Input Message</p>
+        <div class="input-wrap">
+            <textarea
+                id="msgInput"
+                placeholder="Type or paste any text to hash…"
+                spellcheck="false"
+                autocomplete="off"
+            ></textarea>
+        </div>
+        <div class="input-footer">
+            <span class="char-count"><span id="charCount">0</span> chars · <span id="byteCount">0</span> bytes</span>
+            <div class="btn-row">
+                <button class="btn btn-ghost" id="clearBtn" title="Clear input">
+                    ✕ Clear
+                </button>
+                <button class="btn btn-ghost" id="sampleBtn" title="Load a sample">
+                    ↺ Sample
+                </button>
+                <button class="btn btn-primary" id="hashBtn">
+                    ⚡ Hash
+                </button>
+            </div>
+        </div>
+
+        <hr class="divider" />
+
+        <!-- Output -->
+        <div class="output-header">
+            <p class="section-label" style="margin-bottom:0">SHA-256 Digest</p>
+            <button class="btn" id="copyBtn" disabled>⎘ Copy</button>
+        </div>
+
+        <div class="hash-display" id="hashDisplay">
+            <span class="hash-placeholder" id="hashPlaceholder">Hash will appear here…</span>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-bar">
+            <div class="stat-pill">
+                <span class="label">Output</span>
+                <span class="val">256 bits · 32 bytes · 64 hex chars</span>
+            </div>
+            <div class="stat-pill">
+                <span class="label">Blocks</span>
+                <span class="val" id="statBlocks">—</span>
+            </div>
+            <div class="stat-pill">
+                <span class="label">Rounds</span>
+                <span class="val" id="statRounds">—</span>
+            </div>
+            <div class="stat-pill">
+                <span class="label">Time</span>
+                <span class="val" id="statTime">—</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- History -->
+    <div class="history-card">
+        <div class="history-header">
+            <h2>🕓 Recent Hashes <span id="historyCount">0</span></h2>
+            <button class="btn btn-danger" id="clearHistBtn" style="padding:5px 12px;font-size:12px;">Clear history</button>
+        </div>
+        <div id="historyEmpty" class="history-empty">No hashes computed yet.</div>
+        <ul id="historyList"></ul>
+    </div>
+
+</div><!-- /wrapper -->
+
+<!-- Toast notification -->
+<div id="toast" role="status" aria-live="polite">✓ Copied to clipboard!</div>
+
+<!-- Scripts -->
+<script src="sha256.js"></script>
+<script>
+// ================================================================
+//  App Logic
+// ================================================================
+const hasher      = new SecureHash256();
+const msgInput    = document.getElementById('msgInput');
+const hashDisplay = document.getElementById('hashDisplay');
+const hashPlaceholder = document.getElementById('hashPlaceholder');
+const copyBtn     = document.getElementById('copyBtn');
+const clearBtn    = document.getElementById('clearBtn');
+const sampleBtn   = document.getElementById('sampleBtn');
+const hashBtn     = document.getElementById('hashBtn');
+const charCount   = document.getElementById('charCount');
+const byteCount   = document.getElementById('byteCount');
+const statBlocks  = document.getElementById('statBlocks');
+const statRounds  = document.getElementById('statRounds');
+const statTime    = document.getElementById('statTime');
+const historyList = document.getElementById('historyList');
+const historyCount= document.getElementById('historyCount');
+const historyEmpty= document.getElementById('historyEmpty');
+const clearHistBtn= document.getElementById('clearHistBtn');
+const toast       = document.getElementById('toast');
+
+let lastHash  = '';
+let history   = [];
+let autoMode  = true;   // live-hash while typing
+
+const SAMPLES = [
+    'hello world',
+    'The quick brown fox jumps over the lazy dog',
+    'SHA-256 built from scratch in JavaScript!',
+    'abc',
+    '0'.repeat(64),
+];
+let sampleIdx = 0;
+
+// ---- Update counters ----------------------------------------
+function updateCounters(text) {
+    const bytes = new TextEncoder().encode(text);
+    charCount.textContent = text.length;
+    byteCount.textContent = bytes.length;
+}
+
+// ---- Colourise hash output ----------------------------------
+function renderHash(hex) {
+    hashPlaceholder.style.display = 'none';
+    hashDisplay.classList.add('has-hash');
+    // Build spans with colour class based on nibble value
+    const spans = [...hex].map(c => {
+        const sp = document.createElement('span');
+        sp.className = `hash-char c${c}`;
+        sp.textContent = c;
+        sp.title = `0x${c.toUpperCase()} (nibble ${parseInt(c,16)})`;
+        return sp;
+    });
+    // Remove old chars (keep placeholder)
+    Array.from(hashDisplay.querySelectorAll('.hash-char')).forEach(el => el.remove());
+    spans.forEach(sp => hashDisplay.appendChild(sp));
+
+    // Stagger-in animation
+    spans.forEach((sp, i) => {
+        sp.style.opacity = '0';
+        sp.style.transform = 'translateY(-6px)';
+        requestAnimationFrame(() => {
+            setTimeout(() => {
+                sp.style.transition = 'opacity 0.18s ease, transform 0.18s ease';
+                sp.style.opacity = '1';
+                sp.style.transform = 'translateY(0)';
+            }, i * 9);
+        });
+    });
+}
+
+// ---- Run hash -----------------------------------------------
+function runHash(text) {
+    if (text === '') {
+        resetOutput();
+        return;
+    }
+
+    // Show spinner in button
+    hashBtn.innerHTML = '<span class="spinner"></span> Hashing…';
+    hashBtn.disabled = true;
+
+    // Defer so the DOM updates before the heavy work
+    setTimeout(() => {
+        const t0 = performance.now();
+
+        let result;
+        try {
+            result = hasher.digest(text);
+        } catch(err) {
+            hashBtn.innerHTML = '⚡ Hash';
+            hashBtn.disabled = false;
+            hashDisplay.classList.remove('has-hash');
+            hashPlaceholder.style.display = '';
+            hashPlaceholder.textContent   = '⚠ Error: ' + err.message;
+            return;
+        }
+
+        const elapsed = (performance.now() - t0).toFixed(2);
+
+        lastHash = result;
+        renderHash(result);
+        copyBtn.disabled = false;
+
+        // Stats
+        const blocks = Math.ceil((new TextEncoder().encode(text).length * 8 + 65) / 512);
+        statBlocks.textContent = blocks + (blocks === 1 ? ' block' : ' blocks');
+        statRounds.textContent = (blocks * 64) + ' rounds';
+        statTime.textContent   = elapsed + ' ms';
+
+        // Add to history
+        addHistory(text, result);
+
+        hashBtn.innerHTML = '⚡ Hash';
+        hashBtn.disabled = false;
+    }, 0);
+}
+
+// ---- Reset output -------------------------------------------
+function resetOutput() {
+    lastHash = '';
+    Array.from(hashDisplay.querySelectorAll('.hash-char')).forEach(el => el.remove());
+    hashPlaceholder.style.display = '';
+    hashPlaceholder.textContent   = 'Hash will appear here…';
+    hashDisplay.classList.remove('has-hash', 'copied');
+    copyBtn.disabled = true;
+    statBlocks.textContent = '—';
+    statRounds.textContent = '—';
+    statTime.textContent   = '—';
+}
+
+// ---- History ------------------------------------------------
+function addHistory(input, hash) {
+    const entry = { input, hash, time: new Date() };
+    history.unshift(entry);
+    if (history.length > 20) history.pop();
+    renderHistory();
+}
+
+function renderHistory() {
+    historyList.innerHTML = '';
+    historyCount.textContent = history.length;
+    if (history.length === 0) {
+        historyEmpty.style.display = '';
+        return;
+    }
+    historyEmpty.style.display = 'none';
+    history.forEach((entry, idx) => {
+        const li = document.createElement('li');
+        li.id = `hist-${idx}`;
+        li.innerHTML = `
+            <span class="hist-input"><strong>"${escapeHtml(entry.input.slice(0,80))}${entry.input.length > 80 ? '…' : ''}"</strong></span>
+            <span class="hist-hash">${entry.hash}</span>
+            <span class="hist-time">${formatTime(entry.time)}</span>
+        `;
+        li.addEventListener('click', () => {
+            msgInput.value = entry.input;
+            updateCounters(entry.input);
+            runHash(entry.input);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+        li.title = 'Click to re-load this input';
+        historyList.appendChild(li);
+    });
+}
+
+function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function formatTime(date) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// ---- Copy ---------------------------------------------------
+function showToast(msg) {
+    toast.textContent = '✓ ' + msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2200);
+}
+
+copyBtn.addEventListener('click', async () => {
+    if (!lastHash) return;
+    try {
+        await navigator.clipboard.writeText(lastHash);
+        copyBtn.textContent = '✓ Copied!';
+        copyBtn.classList.add('success');
+        hashDisplay.classList.add('copied');
+        showToast('Hash copied to clipboard!');
+        setTimeout(() => {
+            copyBtn.textContent = '⎘ Copy';
+            copyBtn.classList.remove('success');
+            hashDisplay.classList.remove('copied');
+        }, 2000);
+    } catch {
+        // Fallback for non-secure contexts
+        const ta = document.createElement('textarea');
+        ta.value = lastHash;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('Hash copied!');
+    }
+});
+
+// ---- Event listeners ----------------------------------------
+let debounceTimer;
+msgInput.addEventListener('input', () => {
+    const text = msgInput.value;
+    updateCounters(text);
+    if (autoMode) {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => runHash(text), 220);
+    }
+});
+
+hashBtn.addEventListener('click', () => runHash(msgInput.value));
+
+clearBtn.addEventListener('click', () => {
+    msgInput.value = '';
+    updateCounters('');
+    resetOutput();
+    msgInput.focus();
+});
+
+sampleBtn.addEventListener('click', () => {
+    const sample = SAMPLES[sampleIdx % SAMPLES.length];
+    sampleIdx++;
+    msgInput.value = sample;
+    updateCounters(sample);
+    runHash(sample);
+    msgInput.focus();
+});
+
+clearHistBtn.addEventListener('click', () => {
+    history = [];
+    renderHistory();
+});
+
+// Ctrl+Enter also hashes
+msgInput.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        runHash(msgInput.value);
+    }
+});
+
+// ---- Init ---------------------------------------------------
+renderHistory();
+msgInput.focus();
+</script>
+</body>
+</html>
